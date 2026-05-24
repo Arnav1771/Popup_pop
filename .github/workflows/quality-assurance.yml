@@ -1,0 +1,282 @@
+name: MVP+ Quality Assurance
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  # ── Windows Quality Assurance ──────────────────────────────────
+  qa-windows:
+    name: QA Windows (Python ${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-qa-${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-qa-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-qa-
+      
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      
+      - name: Run linting (ruff)
+        run: ruff check src/ tests/
+        continue-on-error: false
+      
+      - name: Run formatting check (black)
+        run: black --check src/ tests/
+        continue-on-error: false
+      
+      - name: Run import sorting check (isort)
+        run: isort --check src/ tests/
+        continue-on-error: false
+      
+      - name: Run type checking (mypy --strict)
+        run: mypy src/cmdpop/
+        continue-on-error: false
+      
+      - name: Generate tests from fixtures
+        run: python tests/generate_tests.py
+      
+      - name: Run test suite
+        run: pytest tests/ -v --tb=short --cov=src/cmdpop --cov-report=term-missing --cov-report=xml
+        continue-on-error: false
+      
+      - name: "Validate code coverage (MVP+ requirement: 80%+)"
+        run: |
+          $coverage = python -m coverage json -o /dev/null
+          $total = (Get-Content coverage.json | ConvertFrom-Json).totals.percent_covered
+          Write-Output "Total Coverage: ${total}%"
+          if ($total -lt 80) {
+            Write-Output "Coverage ${total}% is below MVP+ threshold of 80%"
+            exit 1
+          }
+          Write-Output "Coverage ${total}% meets MVP+ threshold of 80%"
+      
+      - name: Report QA Status
+        if: success()
+        run: |
+          Write-Output ""
+          Write-Output "═══════════════════════════════════════════"
+          Write-Output "✅ Windows MVP+ Quality Assurance PASSED"
+          Write-Output "═══════════════════════════════════════════"
+          Write-Output "Platform: Windows"
+          Write-Output "Python: ${{ matrix.python-version }}"
+          Write-Output "Status: Ready for MVP+"
+          Write-Output ""
+      
+      - name: Report QA Failure
+        if: failure()
+        run: |
+          Write-Output ""
+          Write-Output "═══════════════════════════════════════════"
+          Write-Output "❌ Windows MVP+ Quality Assurance FAILED"
+          Write-Output "═══════════════════════════════════════════"
+          exit 1
+
+  # ── Linux Quality Assurance ───────────────────────────────────
+  qa-linux:
+    name: QA Linux (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-qa-${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-qa-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-qa-
+      
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      
+      - name: Run linting (ruff)
+        run: ruff check src/ tests/
+      
+      - name: Run formatting check (black)
+        run: black --check src/ tests/
+      
+      - name: Run import sorting check (isort)
+        run: isort --check src/ tests/
+      
+      - name: Run type checking (mypy --strict)
+        run: mypy src/cmdpop/
+      
+      - name: Generate tests from fixtures
+        run: python tests/generate_tests.py
+      
+      - name: Run test suite
+        run: pytest tests/ -v --tb=short --cov=src/cmdpop --cov-report=term-missing --cov-report=xml
+      
+      - name: "Validate code coverage (MVP+ requirement: 80%+)"
+        run: |
+          coverage_total=$(python -m coverage json -o /dev/null && python -c "import json; print(json.load(open('coverage.json'))['totals']['percent_covered'])")
+          echo "Total Coverage: ${coverage_total}%"
+          if (( $(echo "$coverage_total < 80" | bc -l) )); then
+            echo "Coverage ${coverage_total}% is below MVP+ threshold of 80%"
+            exit 1
+          fi
+          echo "Coverage ${coverage_total}% meets MVP+ threshold of 80%"
+      
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.12'
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: qa-linux-${{ matrix.python-version }}
+      
+      - name: Report QA Status
+        if: success()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "✅ Linux MVP+ Quality Assurance PASSED"
+          echo "═══════════════════════════════════════════"
+          echo "Platform: Linux"
+          echo "Python: ${{ matrix.python-version }}"
+          echo "Status: Ready for MVP+"
+          echo ""
+      
+      - name: Report QA Failure
+        if: failure()
+        run: |
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "❌ Linux MVP+ Quality Assurance FAILED"
+          echo "═══════════════════════════════════════════"
+          exit 1
+
+  # ── MVP+ Readiness Verification ───────────────────────────────
+  mvp-readiness:
+    name: MVP+ Readiness Check
+    runs-on: ubuntu-latest
+    needs: [qa-windows, qa-linux]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check MVP+ Requirements
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════╗"
+          echo "║      MVP+ QUALITY ASSURANCE REPORT          ║"
+          echo "╚════════════════════════════════════════════╝"
+          echo ""
+          echo "Quality Gates:"
+          echo "  ✅ Linting (ruff, black, isort)"
+          echo "  ✅ Type Checking (mypy --strict)"
+          echo "  ✅ Unit Tests (pytest)"
+          echo "  ✅ Code Coverage (>80%)"
+          echo "  ✅ Multi-platform Testing (Windows, Linux)"
+          echo "  ✅ Multi-version Testing (Python 3.11, 3.12)"
+          echo ""
+          if [[ "${{ needs.qa-windows.result }}" == "success" && \
+                "${{ needs.qa-linux.result }}" == "success" ]]; then
+            echo "FINAL STATUS: ✅ READY FOR MVP+"
+            echo ""
+            echo "Platform Results:"
+            echo "  • Windows: PASSED"
+            echo "  • Linux: PASSED"
+            echo ""
+            exit 0
+          else
+            echo "FINAL STATUS: ❌ NOT READY FOR MVP+"
+            echo ""
+            echo "Platform Results:"
+            if [[ "${{ needs.qa-windows.result }}" != "success" ]]; then
+              echo "  • Windows: FAILED"
+            else
+              echo "  • Windows: PASSED"
+            fi
+            if [[ "${{ needs.qa-linux.result }}" != "success" ]]; then
+              echo "  • Linux: FAILED"
+            else
+              echo "  • Linux: PASSED"
+            fi
+            echo ""
+            exit 1
+          fi
+
+  # ── Summary Status ─────────────────────────────────────────────
+  qa-status:
+    name: QA Status Summary
+    runs-on: ubuntu-latest
+    needs: [qa-windows, qa-linux, mvp-readiness]
+    if: always()
+    steps:
+      - name: Generate Status Report
+        run: |
+          echo "## 🔍 MVP+ Quality Assurance Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Overall Status" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.mvp-readiness.result }}" == "success" ]]; then
+            echo "✅ **READY FOR MVP+**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **NOT READY FOR MVP+**" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Platform Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          if [[ "${{ needs.qa-windows.result }}" == "success" ]]; then
+            echo "| Windows | ✅ PASSED |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Windows | ❌ FAILED |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [[ "${{ needs.qa-linux.result }}" == "success" ]]; then
+            echo "| Linux | ✅ PASSED |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Linux | ❌ FAILED |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quality Gates Verified" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Code Linting (ruff, black, isort)" >> $GITHUB_STEP_SUMMARY
+          echo "- Type Safety (mypy --strict mode)" >> $GITHUB_STEP_SUMMARY
+          echo "- Unit Tests (pytest)" >> $GITHUB_STEP_SUMMARY
+          echo "- Code Coverage (>80% threshold)" >> $GITHUB_STEP_SUMMARY
+          echo "- Cross-platform Compatibility" >> $GITHUB_STEP_SUMMARY
+          echo "- Multi-version Python Support (3.11, 3.12)" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Verify MVP+ Status
+        if: failure() || needs.mvp-readiness.result != 'success'
+        run: exit 1
