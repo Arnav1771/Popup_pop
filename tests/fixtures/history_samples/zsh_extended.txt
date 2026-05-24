@@ -1,0 +1,5 @@
+: 1698765432:0;git status
+: 1698765431:0;git diff HEAD~1
+: 1698765430:120;npm install
+: 1698765429:0;git commit -m 'multi\
+line command'
