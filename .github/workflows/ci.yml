@@ -1,22 +1,93 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
 
 permissions:
   contents: read
 
 jobs:
+  # ── Linting & Formatting ──────────────────────────────────────
+  lint:
+    name: Lint (ruff, black, isort)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-lint-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-lint-
+      
+      - name: Install linting tools
+        run: pip install ruff black isort
+      
+      - name: Check with ruff
+        run: ruff check src/ tests/
+      
+      - name: Check formatting with black
+        run: black --check src/ tests/
+      
+      - name: Check import sorting with isort
+        run: isort --check src/ tests/
+
+  # ── Type Checking ──────────────────────────────────────────────
+  type-check:
+    name: Type Check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+      
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-mypy-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-mypy-
+      
+      - name: Install mypy
+        run: pip install mypy
+      
+      - name: Run mypy (strict)
+        run: mypy src/cmdpop/
+
+  # ── Testing ───────────────────────────────────────────────────
   test:
+    name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.11", "3.12"]
+      fail-fast: false
     
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
+      
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-test-${{ matrix.python-version }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-test-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-test-
       
       - name: Install dependencies
         run: pip install -e ".[dev]"
@@ -25,10 +96,53 @@ jobs:
         run: python tests/generate_tests.py
       
       - name: Run tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --cov=src/cmdpop --cov-report=term-missing
       
-      - name: Type check
-        run: mypy src/cmdpop/
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v4
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+        with:
+          files: ./.coverage
+          flags: unittests
+          name: codecov-umbrella
+
+  # ── Build ─────────────────────────────────────────────────────
+  build:
+    name: Build (wheel & sdist)
+    runs-on: ubuntu-latest
+    needs: [lint, type-check, test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
       
-      - name: Lint
-        run: ruff check src/ tests/
+      - name: Install build tools
+        run: pip install build
+      
+      - name: Build distributions
+        run: python -m build
+      
+      - name: List artifacts
+        run: ls -la dist/
+
+  # ── Status Check ──────────────────────────────────────────────
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [lint, type-check, test, build]
+    if: always()
+    steps:
+      - name: Check CI status
+        run: |
+          if [[ "${{ needs.lint.result }}" == "failure" || \
+                "${{ needs.type-check.result }}" == "failure" || \
+                "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.build.result }}" == "failure" ]]; then
+            echo "❌ CI failed"
+            exit 1
+          else
+            echo "✅ CI passed"
+            exit 0
+          fi
+
