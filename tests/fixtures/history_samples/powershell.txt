@@ -1,0 +1,4 @@
+Get-ChildItem -Recurse
+Set-Location C:\Users\dev\projects
+git commit -m 'fix: windows paths'
+docker ps -a

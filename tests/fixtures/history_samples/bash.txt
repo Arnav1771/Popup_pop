@@ -1,0 +1,10 @@
+git commit -m 'fix auth'
+npm run dev
+
+# 1698765432
+docker build -t myapp . --no-cache
+export SECRET_TOKEN=abc123
+ls -la | grep '.py' | head -20
+cd ~/Projects/myapp && git pull
+for f in *.txt; do echo $f; done
+git commit -m 'feat: add émojis 🎉'

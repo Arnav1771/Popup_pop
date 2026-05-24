@@ -1,0 +1,4 @@
+- cmd: git log --oneline -10
+  when: 1698765432
+- cmd: kubectl get pods -A
+  when: 1698765430
